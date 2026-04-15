@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>席替えプロフェッショナル</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { 
+            font-family: 'Inter', 'noto sans jp', sans-serif; 
+            background-color: #f8fafc; 
+            overflow-x: hidden;
+            height: 100vh;
+        }
+        .seat { transition: all 0.3s ease; }
+        .seat-fixed { background-color: #fee2e2; border: 2px solid #ef4444; }
+        .seat-disabled { background-color: #e2e8f0; border: 2px dashed #94a3b8; }
+        .perspective-1000 { perspective: 1000px; }
+        .flip-card-inner { transition: transform 0.6s; transform-style: preserve-3d; position: relative; width: 100%; height: 100%; }
+        .is-flipped { transform: rotateY(180deg); }
+        .flip-card-front, .flip-card-back { backface-visibility: hidden; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 0.5rem; }
+        .flip-card-back { transform: rotateY(180deg); }
+        
+        /* 画面に収めるためのグリッド調整 */
+        #student-grid {
+            display: grid;
+            height: 100%;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body class="p-2 md:p-4">
+    <div id="app" class="max-w-[95vw] mx-auto h-full flex flex-col">
+        <!-- Header: 必要最小限の高さに -->
+        <header class="flex justify-between items-center mb-2 gap-4 h-12">
+            <div class="flex items-center gap-3">
+                <h1 class="text-xl font-bold text-slate-800 tracking-tight leading-none">席替えプロフェッショナル</h1>
+                <span id="header-mode-badge" class="hidden md:inline-block px-2 py-1 text-xs font-bold rounded-md bg-blue-100 text-blue-700 transition-colors duration-300">① 席替え</span>
+            </div>
+            <div class="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200 text-sm">
+                <button id="tab-teacher" onclick="switchView('teacher')" class="px-4 py-1 rounded-md font-semibold bg-slate-800 text-white transition">教師用</button>
+                <button id="tab-student" onclick="switchView('student')" class="px-4 py-1 rounded-md font-semibold text-slate-600 transition">生徒用</button>
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-hidden">
+            <!-- Teacher View (Scrollable if needed) -->
+            <div id="view-teacher" class="space-y-4 overflow-y-auto h-full pb-10">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <!-- Config Panel -->
+                    <div class="lg:col-span-1 space-y-4">
+                        <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                            <h2 class="text-sm font-bold mb-3 flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-blue-500 rounded-full"></span> 基本設定
+                            </h2>
+                            <div class="space-y-3 text-sm">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">モード選択</label>
+                                    <select id="mode-select" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                                        <option value="normal">① 席替え</option>
+                                        <option value="math">② グループワーク</option>
+                                    </select>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-700 mb-1">横列(最大6)</label>
+                                        <input type="number" id="cols-input" value="6" min="1" max="6" class="w-full p-1.5 border rounded">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-700 mb-1">縦列(最大8)</label>
+                                        <input type="number" id="rows-input" value="8" min="1" max="8" class="w-full p-1.5 border rounded">
+                                    </div>
+                                </div>
+                                <!-- グループ人数設定（数学モード時のみ表示） -->
+                                <div id="group-size-container" class="hidden">
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">1グループの人数</label>
+                                    <input type="number" id="group-size-input" value="4" min="2" max="10" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-purple-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">生徒名簿(CSV)の読み込み</label>
+                                    <input type="file" id="student-data-upload" accept=".csv" class="text-xs w-full text-slate-500 file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                                    <p class="text-[10px] text-slate-500 mt-1">※1列目:出席番号、2列目:性別(M/F または 男/女)</p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                            <h2 class="text-sm font-bold mb-3 flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-red-500 rounded-full"></span> 制約設定
+                            </h2>
+                            <div class="space-y-2">
+                                <input type="text" id="trouble-pairs" placeholder="例: 1,12 / 5,20" class="w-full p-1.5 border rounded text-xs">
+                                <p class="text-[10px] text-slate-500">※座席クリックで「使用不可/固定席」設定</p>
+                                <p id="drag-hint" class="text-[10px] text-purple-600 font-bold hidden">※ドラッグ＆ドロップでグループ(色)の入れ替えができます</p>
+                            </div>
+                        </section>
+
+                        <button id="btn-generate-teacher" onclick="generateSeating(true)" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow transition transform active:scale-95">
+                            抽選 & 画面移動
+                        </button>
+                    </div>
+
+                    <!-- Layout Panel -->
+                    <div class="lg:col-span-2 flex flex-col h-full">
+                        <div class="bg-slate-700 text-white p-1 rounded-t-lg text-center font-bold text-xs uppercase tracking-widest">教卓 (前方)</div>
+                        <div id="seating-grid" class="grid gap-1.5 p-3 bg-white border border-slate-200 rounded-b-lg overflow-auto shadow-inner">
+                            <!-- JS will generate seats here -->
+                        </div>
+                        <div id="warning-box" class="hidden mt-2 p-2 bg-red-100 border border-red-200 text-red-700 rounded-lg text-[10px] font-medium"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Student View: No scroll, fits screen -->
+            <div id="view-student" class="hidden h-full flex flex-col overflow-hidden">
+                <div class="bg-white p-3 rounded-2xl shadow-xl border border-slate-100 flex flex-col h-full">
+                    <div id="student-desk" class="bg-slate-700 text-white p-2 rounded-lg text-lg font-bold mb-2 shrink-0 flex justify-between items-center transition-colors duration-300">
+                        <span>教卓</span>
+                        <span id="student-mode-badge" class="text-sm font-medium px-2 py-0.5 rounded bg-white/20">① 席替え</span>
+                    </div>
+                    
+                    <!-- Student Grid Container: Flexible size -->
+                    <div class="flex-1 overflow-hidden py-2">
+                        <div id="student-grid" class="max-w-6xl mx-auto">
+                            <!-- Student seats will be here -->
+                        </div>
+                    </div>
+
+                    <!-- Control Bar: Fixed at bottom of the panel -->
+                    <div class="flex flex-wrap justify-center items-center gap-3 pt-3 border-t border-slate-100 shrink-0">
+                        <button onclick="generateSeating(false)" class="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-full shadow hover:bg-emerald-700 transition transform active:scale-95">
+                            新しく抽選
+                        </button>
+                        <button id="btn-reveal-sequence" onclick="revealSequence()" class="px-5 py-2.5 bg-amber-500 text-white text-sm font-bold rounded-full shadow hover:bg-amber-600 transition transform active:scale-95 disabled:opacity-50">
+                            順番に公開
+                        </button>
+                        <button onclick="revealAll()" class="px-5 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-full shadow hover:bg-blue-700 transition transform active:scale-95">
+                            一斉公開
+                        </button>
+                        <button onclick="resetStudentView()" class="px-5 py-2.5 bg-slate-200 text-slate-700 text-sm font-bold rounded-full hover:bg-slate-300 transition">
+                            リセット
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="assign-modal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl w-80">
+            <h3 class="text-lg font-bold mb-4">座席指定</h3>
+            <input type="number" id="assign-student-id" placeholder="出席番号" class="w-full p-2 border rounded-lg mb-4 outline-none">
+            <div class="flex gap-2 text-sm font-bold">
+                <button onclick="saveAssignment()" class="flex-1 py-2 bg-blue-600 text-white rounded-lg">保存</button>
+                <button onclick="closeModal()" class="flex-1 py-2 bg-slate-100 rounded-lg">戻る</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- State ---
+        let config = {
+            cols: 6,
+            rows: 8,
+            mode: 'normal',
+            groupSize: 4,
+            seats: [], 
+            students: [],
+            troublePairs: []
+        };
+
+        let resultSeating = []; 
+        let selectedSeatIndex = null;
+        let isRevealed = false;
+        let sequenceInterval = null;
+        let draggedIndex = null; // ドラッグ状態管理
+
+        const gridEl = document.getElementById('seating-grid');
+        const studentGridEl = document.getElementById('student-grid');
+
+        function init() {
+            const students = [];
+            for(let i=1; i<=40; i++) {
+                students.push({ id: i, gender: i % 2 === 0 ? 'F' : 'M' });
+            }
+            config.students = students;
+            updateGridSize();
+        }
+
+        function updateGridSize() {
+            config.cols = parseInt(document.getElementById('cols-input').value) || 6;
+            config.rows = parseInt(document.getElementById('rows-input').value) || 8;
+            config.mode = document.getElementById('mode-select').value;
+            config.groupSize = parseInt(document.getElementById('group-size-input').value) || 4;
+            
+            config.seats = [];
+            for (let i = 0; i < config.cols * config.rows; i++) {
+                config.seats.push({ type: 'normal', studentId: null, groupId: null });
+            }
+            if(config.mode === 'math') {
+                assignGroupsAutomatically();
+            }
+            updateModeUI();
+            renderTeacherGrid();
+        }
+
+        // --- 自動グループ割り当て (かたまり優先) ---
+        function assignGroupsAutomatically() {
+            if (config.mode !== 'math') return;
+            const rows = config.rows;
+            const cols = config.cols;
+            const size = config.groupSize;
+            
+            let validSeatsCount = 0;
+            config.seats.forEach(s => {
+                s.groupId = null;
+                if (s.type !== 'disabled') validSeatsCount++;
+            });
+
+            if (validSeatsCount === 0) return;
+
+            // グループ数と各グループの人数を均等に計算
+            let numGroups = Math.round(validSeatsCount / size);
+            if (numGroups === 0) numGroups = 1;
+
+            const baseSize = Math.floor(validSeatsCount / numGroups);
+            const remainder = validSeatsCount % numGroups;
+            const targetSizes = [];
+            for (let i = 0; i < numGroups; i++) {
+                targetSizes.push(baseSize + (i < remainder ? 1 : 0));
+            }
+            
+            let currentGroupIndex = 0;
+            let currentGroupId = 1;
+            
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const idx = r * cols + c;
+                    if (config.seats[idx].type === 'disabled' || config.seats[idx].groupId !== null) continue;
+                    
+                    if (currentGroupIndex >= numGroups) break;
+                    const targetSize = targetSizes[currentGroupIndex];
+                    
+                    let groupMembers = [idx];
+                    config.seats[idx].groupId = currentGroupId;
+                    
+                    // 均等に計算された人数になるまで近接する席を確保
+                    while (groupMembers.length < targetSize) {
+                        let candidates = [];
+                        for (let mIdx of groupMembers) {
+                            const mr = Math.floor(mIdx / cols);
+                            const mc = mIdx % cols;
+                            
+                            const neighbors = [
+                                {r: mr-1, c: mc}, {r: mr+1, c: mc},
+                                {r: mr, c: mc-1}, {r: mr, c: mc+1}
+                            ];
+                            
+                            for (let n of neighbors) {
+                                if (n.r >= 0 && n.r < rows && n.c >= 0 && n.c < cols) {
+                                    const nIdx = n.r * cols + n.c;
+                                    if (config.seats[nIdx].type !== 'disabled' && config.seats[nIdx].groupId === null && !candidates.includes(nIdx)) {
+                                        candidates.push(nIdx);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 周りに空きがない場合は、全体から最も近い未割り当て席を探す
+                        if (candidates.length === 0) {
+                            let closestIdx = -1;
+                            let minGlobalDist = Infinity;
+                            let cr = 0, cc = 0;
+                            groupMembers.forEach(m => { cr += Math.floor(m/cols); cc += m%cols; });
+                            cr /= groupMembers.length; cc /= groupMembers.length;
+                            
+                            for (let i = 0; i < config.seats.length; i++) {
+                                if (config.seats[i].type !== 'disabled' && config.seats[i].groupId === null) {
+                                    const ir = Math.floor(i/cols); const ic = i%cols;
+                                    const dist = Math.abs(ir-cr) + Math.abs(ic-cc);
+                                    if (dist < minGlobalDist) {
+                                        minGlobalDist = dist;
+                                        closestIdx = i;
+                                    }
+                                }
+                            }
+                            if (closestIdx !== -1) candidates.push(closestIdx);
+                            else break; // もう未割り当てが存在しない
+                        }
+                        
+                        // 候補の中から、グループの重心に最も近いものを選ぶ（かたまりにするため）
+                        let cr = 0, cc = 0;
+                        groupMembers.forEach(m => { cr += Math.floor(m/cols); cc += m%cols; });
+                        cr /= groupMembers.length; cc /= groupMembers.length;
+                        
+                        let bestCandidate = -1;
+                        let minDist = Infinity;
+                        for (let candIdx of candidates) {
+                            const candR = Math.floor(candIdx / cols);
+                            const candC = candIdx % cols;
+                            // ユークリッド距離 ＋ 左・上方向に詰める微小バイアス
+                            const dist = Math.pow(candR - cr, 2) + Math.pow(candC - cc, 2);
+                            const bias = candR * 0.01 + candC * 0.01; 
+                            if (dist + bias < minDist) {
+                                minDist = dist + bias;
+                                bestCandidate = candIdx;
+                            }
+                        }
+                        
+                        if (bestCandidate !== -1) {
+                            config.seats[bestCandidate].groupId = currentGroupId;
+                            groupMembers.push(bestCandidate);
+                        }
+                    }
+                    currentGroupId++;
+                    currentGroupIndex++;
+                }
+            }
+        }
+
+        function updateModeUI() {
+            const mode = config.mode;
+            const headerBadge = document.getElementById('header-mode-badge');
+            const studentBadge = document.getElementById('student-mode-badge');
+            const genBtn = document.getElementById('btn-generate-teacher');
+            const studentDesk = document.getElementById('student-desk');
+            const groupSizeContainer = document.getElementById('group-size-container');
+            const dragHint = document.getElementById('drag-hint');
+
+            if (mode === 'normal') {
+                headerBadge.innerText = '① 席替え';
+                headerBadge.className = 'hidden md:inline-block px-2 py-1 text-xs font-bold rounded-md bg-blue-100 text-blue-700 transition-colors duration-300';
+                
+                studentBadge.innerText = '① 席替え';
+                studentDesk.className = 'bg-slate-700 text-white p-2 rounded-lg text-lg font-bold mb-2 shrink-0 flex justify-between items-center transition-colors duration-300';
+                
+                genBtn.className = 'w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow transition transform active:scale-95';
+                groupSizeContainer.classList.add('hidden');
+                dragHint.classList.add('hidden');
+            } else {
+                headerBadge.innerText = '② グループワーク';
+                headerBadge.className = 'hidden md:inline-block px-2 py-1 text-xs font-bold rounded-md bg-purple-100 text-purple-700 transition-colors duration-300';
+                
+                studentBadge.innerText = '② グループワーク';
+                studentDesk.className = 'bg-purple-700 text-white p-2 rounded-lg text-lg font-bold mb-2 shrink-0 flex justify-between items-center transition-colors duration-300';
+                
+                genBtn.className = 'w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow transition transform active:scale-95';
+                groupSizeContainer.classList.remove('hidden');
+                dragHint.classList.remove('hidden');
+            }
+        }
+
+        function switchView(view) {
+            stopSequence();
+            document.getElementById('view-teacher').classList.toggle('hidden', view !== 'teacher');
+            document.getElementById('view-student').classList.toggle('hidden', view !== 'student');
+            
+            const teacherTab = document.getElementById('tab-teacher');
+            const studentTab = document.getElementById('tab-student');
+            
+            if (view === 'teacher') {
+                teacherTab.className = "px-4 py-1 rounded-md font-semibold bg-slate-800 text-white transition";
+                studentTab.className = "px-4 py-1 rounded-md font-semibold text-slate-600 transition";
+            } else {
+                teacherTab.className = "px-4 py-1 rounded-md font-semibold text-slate-600 transition";
+                studentTab.className = "px-4 py-1 rounded-md font-semibold bg-slate-800 text-white transition";
+                renderStudentGrid();
+            }
+        }
+
+        function renderTeacherGrid() {
+            gridEl.style.gridTemplateColumns = `repeat(${config.cols}, 1fr)`;
+            gridEl.innerHTML = '';
+            
+            config.seats.forEach((seat, idx) => {
+                // div要素として生成（Drag&Dropの安定性のため）
+                const btn = document.createElement('div');
+                
+                // 数学モードで有効な席の場合、グループカラーを反映
+                if (config.mode === 'math' && seat.groupId && seat.type !== 'disabled') {
+                    const color = getGroupColor(seat.groupId);
+                    btn.className = `seat p-2 h-16 text-xs border rounded flex flex-col items-center justify-center gap-1 cursor-grab active:cursor-grabbing ${color.back} ${color.border}`;
+                    btn.innerHTML = `
+                        <span class="text-[10px] font-bold text-slate-500 opacity-60">Gr.${seat.groupId}</span>
+                        ${seat.type === 'fixed' ? `<span class="font-bold text-red-600">${seat.studentId}</span><span class="text-[8px] text-red-400 font-bold uppercase">固定</span>` : `<span class="text-slate-500 font-medium">${idx + 1}</span>`}
+                    `;
+
+                    // ドラッグ＆ドロップ設定
+                    btn.draggable = true;
+                    btn.ondragstart = (e) => {
+                        draggedIndex = idx;
+                        e.dataTransfer.setData('text/plain', idx);
+                        e.dataTransfer.effectAllowed = 'move';
+                        setTimeout(() => btn.classList.add('opacity-40'), 0);
+                    };
+                    btn.ondragend = () => {
+                        draggedIndex = null;
+                        btn.classList.remove('opacity-40');
+                        document.querySelectorAll('.seat').forEach(s => s.classList.remove('ring-2', 'ring-purple-500', 'scale-105'));
+                    };
+                    btn.ondragover = (e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                    };
+                    btn.ondragenter = (e) => {
+                        e.preventDefault();
+                        if(draggedIndex !== idx) {
+                            btn.classList.add('ring-2', 'ring-purple-500', 'scale-105');
+                        }
+                    };
+                    btn.ondragleave = () => {
+                        btn.classList.remove('ring-2', 'ring-purple-500', 'scale-105');
+                    };
+                    btn.ondrop = (e) => {
+                        e.preventDefault();
+                        btn.classList.remove('ring-2', 'ring-purple-500', 'scale-105');
+                        const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                        
+                        if (!isNaN(fromIdx) && fromIdx !== idx && config.seats[fromIdx].type !== 'disabled' && config.seats[idx].type !== 'disabled') {
+                            // グループIDを交換
+                            const tempGroupId = config.seats[fromIdx].groupId;
+                            config.seats[fromIdx].groupId = config.seats[idx].groupId;
+                            config.seats[idx].groupId = tempGroupId;
+                            renderTeacherGrid();
+                        }
+                    };
+                } else {
+                    // 通常モード、または無効席
+                    btn.className = `seat p-2 h-16 text-xs border rounded flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                        seat.type === 'disabled' ? 'seat-disabled' : 
+                        seat.type === 'fixed' ? 'seat-fixed' : 'bg-slate-50 border-slate-200 hover:border-blue-300'
+                    }`;
+                    
+                    if (seat.type === 'disabled') {
+                        btn.innerHTML = '<span class="text-slate-400 font-bold">×</span>';
+                    } else if (seat.type === 'fixed') {
+                        btn.innerHTML = `<span class="font-bold text-red-600">${seat.studentId}</span><span class="text-[8px] text-red-400 font-bold uppercase">固定</span>`;
+                    } else {
+                        btn.innerHTML = `<span class="text-slate-400 font-medium">${idx + 1}</span>`;
+                    }
+                }
+
+                // クリックによる座席ステータス変更
+                btn.onclick = () => handleSeatClick(idx);
+                gridEl.appendChild(btn);
+            });
+        }
+
+        function handleSeatClick(idx) {
+            const seat = config.seats[idx];
+            if (seat.type === 'normal') {
+                seat.type = 'disabled';
+                seat.studentId = null;
+            } else if (seat.type === 'disabled') {
+                selectedSeatIndex = idx;
+                document.getElementById('assign-modal').classList.remove('hidden');
+                document.getElementById('assign-student-id').focus();
+                return;
+            } else {
+                seat.type = 'normal';
+                seat.studentId = null;
+            }
+            
+            // 座席の有効/無効が変わったので、数学モードならグループのかたまりを再計算
+            if(config.mode === 'math') {
+                assignGroupsAutomatically();
+            }
+            renderTeacherGrid();
+        }
+
+        function saveAssignment() {
+            const val = parseInt(document.getElementById('assign-student-id').value);
+            if (val && !isNaN(val)) {
+                config.seats.forEach(s => { if(s.studentId === val) { s.type = 'normal'; s.studentId = null; }});
+                config.seats[selectedSeatIndex].type = 'fixed';
+                config.seats[selectedSeatIndex].studentId = val;
+            }
+            closeModal();
+            if(config.mode === 'math') assignGroupsAutomatically();
+            renderTeacherGrid();
+        }
+
+        function closeModal() {
+            document.getElementById('assign-modal').classList.add('hidden');
+            document.getElementById('assign-student-id').value = '';
+        }
+
+        function generateSeating(shouldSwitchView = false) {
+            stopSequence();
+            const troubleInput = document.getElementById('trouble-pairs').value;
+            config.troublePairs = troubleInput.split('/')
+                .map(p => p.split(',').map(n => parseInt(n.trim())))
+                .filter(p => p.length >= 2 && !p.some(isNaN));
+            
+            config.mode = document.getElementById('mode-select').value;
+            isRevealed = false; 
+
+            const fixedStudentIds = config.seats.filter(s => s.type === 'fixed').map(s => s.studentId);
+            const availableStudents = config.students.filter(s => !fixedStudentIds.includes(s.id));
+            const emptySeatIndices = [];
+            config.seats.forEach((s, i) => { if (s.type === 'normal') emptySeatIndices.push(i); });
+
+            if (availableStudents.length > emptySeatIndices.length) {
+                showMessage(`座席不足: 生徒数 ${availableStudents.length + fixedStudentIds.length} / 席数 ${emptySeatIndices.length + fixedStudentIds.length}`, true);
+                return;
+            }
+
+            let bestLayout = null;
+            let minViolations = Infinity;
+            for (let attempt = 0; attempt < 1000; attempt++) {
+                let currentLayout = config.seats.map((s, i) => ({...s, index: i}));
+                let pool = [...availableStudents];
+                shuffleArray(pool);
+                emptySeatIndices.forEach((seatIdx, i) => {
+                    if (pool[i]) {
+                        currentLayout[seatIdx].studentId = pool[i].id;
+                        currentLayout[seatIdx].gender = pool[i].gender;
+                    }
+                });
+                const violations = checkViolations(currentLayout);
+                if (violations === 0) {
+                    bestLayout = currentLayout;
+                    minViolations = 0;
+                    break;
+                }
+                if (violations < minViolations) {
+                    bestLayout = currentLayout;
+                    minViolations = violations;
+                }
+            }
+
+            // 深いコピーで結果を保存
+            resultSeating = bestLayout.map(s => ({...s}));
+            
+            if (minViolations > 0) {
+                showMessage(`完全に条件を満たせませんでした（エラー度: ${minViolations}）。`, true);
+            } else {
+                document.getElementById('warning-box').classList.add('hidden');
+            }
+
+            if (shouldSwitchView) switchView('student');
+            else renderStudentGrid();
+            renderTeacherGrid();
+        }
+
+        function checkViolations(layout) {
+            let v = 0;
+            const getAt = (r, c) => (r >= 0 && r < config.rows && c >= 0 && c < config.cols) ? layout[r * config.cols + c] : null;
+            layout.forEach((seat, idx) => {
+                if (!seat.studentId) return;
+                const r = Math.floor(idx / config.cols);
+                const c = idx % config.cols;
+                
+                const allNeighbors = [];
+                const crossNeighbors = [];
+                
+                for(let dr=-1; dr<=1; dr++) {
+                    for(let dc=-1; dc<=1; dc++) {
+                        if(dr===0 && dc===0) continue;
+                        const n = getAt(r+dr, c+dc);
+                        if(n && n.studentId) {
+                            allNeighbors.push(n);
+                            if (Math.abs(dr) + Math.abs(dc) === 1) {
+                                crossNeighbors.push(n);
+                            }
+                        }
+                    }
+                }
+                
+                // トラブル対応 (8方向すべてで判定、および同グループ判定)
+                config.troublePairs.forEach(pair => {
+                    if (pair.includes(seat.studentId)) {
+                        const otherId = pair.find(id => id !== seat.studentId);
+                        
+                        // 物理的な隣接は常に避ける
+                        if (allNeighbors.some(n => n.studentId === otherId)) v += 10;
+
+                        // グループワークモードの場合は、同じグループになることを強力に避ける
+                        if (config.mode === 'math') {
+                            const isSameGroup = layout.some(s => s.studentId === otherId && s.groupId === seat.groupId && s.groupId !== null);
+                            if (isSameGroup) v += 50;
+                        }
+                    }
+                });
+
+                // 性別の孤立防止
+                if (config.mode === 'normal') {
+                    const sameGenderCount = crossNeighbors.filter(n => n.gender === seat.gender).length;
+                    if (sameGenderCount === 0) v += 5;
+                } else if (config.mode === 'math') {
+                    const myGroup = layout[idx].groupId;
+                    let sameGenderInGroup = 0;
+                    let totalMembersInGroup = 0;
+                    layout.forEach((otherSeat, otherIdx) => {
+                        if (!otherSeat.studentId) return;
+                        if (layout[otherIdx].groupId === myGroup) {
+                            totalMembersInGroup++;
+                            if (otherIdx !== idx && otherSeat.gender === seat.gender) {
+                                sameGenderInGroup++;
+                            }
+                        }
+                    });
+                    if (totalMembersInGroup >= 4 && sameGenderInGroup === 0) v += 5;
+                }
+            });
+            return v;
+        }
+
+        const groupColors = [
+            { front: 'bg-red-200', back: 'bg-red-100', border: 'border-red-300', frontText: 'text-red-700' },
+            { front: 'bg-orange-200', back: 'bg-orange-100', border: 'border-orange-300', frontText: 'text-orange-700' },
+            { front: 'bg-amber-200', back: 'bg-amber-100', border: 'border-amber-400', frontText: 'text-amber-700' },
+            { front: 'bg-green-200', back: 'bg-green-100', border: 'border-green-300', frontText: 'text-green-700' },
+            { front: 'bg-teal-200', back: 'bg-teal-100', border: 'border-teal-300', frontText: 'text-teal-700' },
+            { front: 'bg-cyan-200', back: 'bg-cyan-100', border: 'border-cyan-300', frontText: 'text-cyan-700' },
+            { front: 'bg-blue-200', back: 'bg-blue-100', border: 'border-blue-300', frontText: 'text-blue-700' },
+            { front: 'bg-indigo-200', back: 'bg-indigo-100', border: 'border-indigo-300', frontText: 'text-indigo-700' },
+            { front: 'bg-violet-200', back: 'bg-violet-100', border: 'border-violet-300', frontText: 'text-violet-700' },
+            { front: 'bg-fuchsia-200', back: 'bg-fuchsia-100', border: 'border-fuchsia-300', frontText: 'text-fuchsia-700' },
+            { front: 'bg-rose-200', back: 'bg-rose-100', border: 'border-rose-300', frontText: 'text-rose-700' },
+            { front: 'bg-lime-200', back: 'bg-lime-100', border: 'border-lime-400', frontText: 'text-lime-800' }
+        ];
+
+        function getGroupColor(groupNum) {
+            if(!groupNum) return { front: 'bg-slate-200', back: 'bg-slate-100', border: 'border-slate-300', frontText: 'text-slate-600' };
+            return groupColors[(groupNum - 1) % groupColors.length];
+        }
+
+        function renderStudentGrid() {
+            studentGridEl.style.gridTemplateColumns = `repeat(${config.cols}, 1fr)`;
+            studentGridEl.style.gridTemplateRows = `repeat(${config.rows}, 1fr)`;
+            studentGridEl.innerHTML = '';
+            
+            if (!resultSeating.length) {
+                studentGridEl.innerHTML = '<div class="col-span-full h-full flex items-center justify-center text-slate-300 font-bold italic">No Seating Data</div>';
+                return;
+            }
+
+            resultSeating.forEach((seat, idx) => {
+                const container = document.createElement('div');
+                container.className = 'perspective-1000 h-full w-full';
+                
+                const inner = document.createElement('div');
+                inner.className = `flip-card-inner ${isRevealed ? 'is-flipped' : ''}`;
+                inner.id = `seat-inner-${idx}`;
+
+                const colors = config.mode === 'math' ? getGroupColor(seat.groupId) : null;
+
+                const front = document.createElement('div');
+                const frontBgClass = config.mode === 'normal' 
+                    ? 'bg-gradient-to-br from-blue-500 to-indigo-600' 
+                    : colors.front;
+                const frontTextClass = config.mode === 'normal'
+                    ? 'text-white'
+                    : colors.frontText;
+                front.className = `flip-card-front ${frontBgClass} ${frontTextClass} shadow flex items-center justify-center text-2xl font-black cursor-pointer`;
+                front.innerText = '?';
+                front.onclick = () => revealSeat(idx);
+
+                const back = document.createElement('div');
+                const backBgClass = config.mode === 'normal' ? 'bg-white border-slate-200' : `${colors.back} ${colors.border}`;
+                // プロジェクターでの区別をはっきりさせるため、border-2 を適用
+                back.className = `flip-card-back shadow-sm flex flex-col items-center justify-center border-2 ${backBgClass} relative overflow-hidden`;
+                
+                if (seat.type === 'disabled') {
+                    back.className = `flip-card-back shadow-sm flex flex-col items-center justify-center border-2 border-slate-200 bg-slate-100 relative overflow-hidden`;
+                    back.innerHTML = '<span class="text-slate-300 font-bold text-xl">×</span>';
+                } else {
+                    const student = config.students.find(s => s.id === seat.studentId);
+                    const isFemale = student?.gender === 'F';
+                    back.innerHTML = `
+                        <span class="text-4xl md:text-5xl font-black ${isFemale ? 'text-pink-500' : 'text-blue-600'}">${seat.studentId}</span>
+                    `;
+                }
+
+                inner.appendChild(front);
+                inner.appendChild(back);
+                container.appendChild(inner);
+                studentGridEl.appendChild(container);
+            });
+        }
+
+        function revealSeat(idx) {
+            const el = document.getElementById(`seat-inner-${idx}`);
+            if (el) el.classList.add('is-flipped');
+        }
+
+        function revealAll() {
+            stopSequence();
+            isRevealed = true;
+            renderStudentGrid();
+        }
+
+        function revealSequence() {
+            if (sequenceInterval) return;
+            const btn = document.getElementById('btn-reveal-sequence');
+            btn.disabled = true;
+            const unrevealedIndices = [];
+            resultSeating.forEach((_, idx) => {
+                const el = document.getElementById(`seat-inner-${idx}`);
+                if (el && !el.classList.contains('is-flipped')) unrevealedIndices.push(idx);
+            });
+            if (unrevealedIndices.length === 0) {
+                btn.disabled = false;
+                return;
+            }
+            shuffleArray(unrevealedIndices);
+            let i = 0;
+            sequenceInterval = setInterval(() => {
+                if (i >= unrevealedIndices.length) {
+                    stopSequence();
+                    return;
+                }
+                revealSeat(unrevealedIndices[i]);
+                i++;
+            }, 250);
+        }
+
+        function stopSequence() {
+            if (sequenceInterval) {
+                clearInterval(sequenceInterval);
+                sequenceInterval = null;
+            }
+            const btn = document.getElementById('btn-reveal-sequence');
+            if(btn) btn.disabled = false;
+        }
+
+        function resetStudentView() {
+            stopSequence();
+            isRevealed = false;
+            renderStudentGrid();
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        function showMessage(msg, isError = true) {
+            const box = document.getElementById('warning-box');
+            box.innerText = msg;
+            box.className = `mt-2 p-2 rounded-lg text-[10px] font-medium block ${isError ? 'bg-red-100 border border-red-200 text-red-700' : 'bg-emerald-100 border border-emerald-200 text-emerald-700'}`;
+        }
+
+        init();
+        document.getElementById('cols-input').addEventListener('change', updateGridSize);
+        document.getElementById('rows-input').addEventListener('change', updateGridSize);
+        document.getElementById('mode-select').addEventListener('change', updateGridSize);
+        document.getElementById('group-size-input').addEventListener('change', updateGridSize);
+        
+        document.getElementById('student-data-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const lines = text.split('\n');
+                const newStudents = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    const parts = line.split(',');
+                    if (parts.length >= 2) {
+                        const id = parseInt(parts[0].trim());
+                        if (isNaN(id)) continue;
+                        const genderStr = parts[1].trim().toUpperCase();
+                        let gender = 'M';
+                        if (genderStr === 'F' || genderStr === '女' || genderStr === 'FEMALE') {
+                            gender = 'F';
+                        }
+                        newStudents.push({ id: id, gender: gender });
+                    }
+                }
+                if (newStudents.length > 0) {
+                    config.students = newStudents;
+                    showMessage(`生徒データを ${newStudents.length} 名分読み込みました。`, false);
+                } else {
+                    showMessage('有効なデータが見つかりませんでした。CSVの形式を確認してください。', true);
+                }
+                e.target.value = ''; // Reset input
+            };
+            reader.readAsText(file);
+        });
+    </script>
+</body>
+</html>
