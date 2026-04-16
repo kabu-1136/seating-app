@@ -50,6 +50,29 @@
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <!-- Config Panel -->
                     <div class="lg:col-span-1 space-y-4">
+
+                        <!-- データ管理 -->
+                        <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                            <h2 class="text-sm font-bold mb-3 flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-green-500 rounded-full"></span> データ管理
+                            </h2>
+                            <div class="space-y-2 text-sm">
+                                <div class="flex gap-2">
+                                    <button onclick="downloadTemplate()" class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded border border-slate-300 transition">① テンプレDL</button>
+                                    <label class="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded border border-slate-300 transition text-center cursor-pointer">
+                                        ② CSV読込
+                                        <input type="file" id="csv-upload" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
+                                    </label>
+                                </div>
+                                <button onclick="downloadResultCSV()" id="btn-download" class="w-full py-2 mt-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                    ③ 履歴付きCSVを保存
+                                </button>
+                                <p class="text-[10px] text-slate-500 mt-1 leading-tight">※次回は③で保存したファイルを②で読み込んでください。</p>
+                                <!-- 読込完了メッセージ表示エリア -->
+                                <div id="upload-status" class="hidden mt-2 p-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-xs font-bold"></div>
+                            </div>
+                        </section>
+
                         <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                             <h2 class="text-sm font-bold mb-3 flex items-center gap-2">
                                 <span class="w-1.5 h-4 bg-blue-500 rounded-full"></span> 基本設定
@@ -76,11 +99,6 @@
                                 <div id="group-size-container" class="hidden">
                                     <label class="block text-xs font-medium text-slate-700 mb-1">1グループの人数</label>
                                     <input type="number" id="group-size-input" value="4" min="2" max="10" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-purple-500 outline-none">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-medium text-slate-700 mb-1">生徒名簿(CSV)の読み込み</label>
-                                    <input type="file" id="student-data-upload" accept=".csv" class="text-xs w-full text-slate-500 file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                                    <p class="text-[10px] text-slate-500 mt-1">※1列目:出席番号、2列目:性別(M/F または 男/女)</p>
                                 </div>
                             </div>
                         </section>
@@ -177,13 +195,18 @@
         let sequenceInterval = null;
         let draggedIndex = null; // ドラッグ状態管理
 
+        // --- 履歴データ用 State ---
+        let pastHistoryHeaders = []; // ['history_1', 'history_2'...]
+        let studentHistoryData = {}; // 生徒ごとの履歴テキスト保持
+        let pastNeighborsMap = {};   // 過去の隣接者セット { '1': Set('2','5'), ... }
+
         const gridEl = document.getElementById('seating-grid');
         const studentGridEl = document.getElementById('student-grid');
 
         function init() {
             const students = [];
             for(let i=1; i<=40; i++) {
-                students.push({ id: i, gender: i % 2 === 0 ? 'F' : 'M' });
+                students.push({ id: i.toString(), gender: i % 2 === 0 ? 'F' : 'M' });
             }
             config.students = students;
             updateGridSize();
@@ -206,7 +229,7 @@
             renderTeacherGrid();
         }
 
-        // --- 自動グループ割り当て (かたまり優先) ---
+        // --- 自動グループ割り当て (かたまり優先 & 均等化) ---
         function assignGroupsAutomatically() {
             if (config.mode !== 'math') return;
             const rows = config.rows;
@@ -300,7 +323,6 @@
                         for (let candIdx of candidates) {
                             const candR = Math.floor(candIdx / cols);
                             const candC = candIdx % cols;
-                            // ユークリッド距離 ＋ 左・上方向に詰める微小バイアス
                             const dist = Math.pow(candR - cr, 2) + Math.pow(candC - cc, 2);
                             const bias = candR * 0.01 + candC * 0.01; 
                             if (dist + bias < minDist) {
@@ -375,10 +397,8 @@
             gridEl.innerHTML = '';
             
             config.seats.forEach((seat, idx) => {
-                // div要素として生成（Drag&Dropの安定性のため）
                 const btn = document.createElement('div');
                 
-                // 数学モードで有効な席の場合、グループカラーを反映
                 if (config.mode === 'math' && seat.groupId && seat.type !== 'disabled') {
                     const color = getGroupColor(seat.groupId);
                     btn.className = `seat p-2 h-16 text-xs border rounded flex flex-col items-center justify-center gap-1 cursor-grab active:cursor-grabbing ${color.back} ${color.border}`;
@@ -387,7 +407,6 @@
                         ${seat.type === 'fixed' ? `<span class="font-bold text-red-600">${seat.studentId}</span><span class="text-[8px] text-red-400 font-bold uppercase">固定</span>` : `<span class="text-slate-500 font-medium">${idx + 1}</span>`}
                     `;
 
-                    // ドラッグ＆ドロップ設定
                     btn.draggable = true;
                     btn.ondragstart = (e) => {
                         draggedIndex = idx;
@@ -419,7 +438,6 @@
                         const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
                         
                         if (!isNaN(fromIdx) && fromIdx !== idx && config.seats[fromIdx].type !== 'disabled' && config.seats[idx].type !== 'disabled') {
-                            // グループIDを交換
                             const tempGroupId = config.seats[fromIdx].groupId;
                             config.seats[fromIdx].groupId = config.seats[idx].groupId;
                             config.seats[idx].groupId = tempGroupId;
@@ -427,7 +445,6 @@
                         }
                     };
                 } else {
-                    // 通常モード、または無効席
                     btn.className = `seat p-2 h-16 text-xs border rounded flex flex-col items-center justify-center gap-1 cursor-pointer ${
                         seat.type === 'disabled' ? 'seat-disabled' : 
                         seat.type === 'fixed' ? 'seat-fixed' : 'bg-slate-50 border-slate-200 hover:border-blue-300'
@@ -442,10 +459,19 @@
                     }
                 }
 
-                // クリックによる座席ステータス変更
                 btn.onclick = () => handleSeatClick(idx);
                 gridEl.appendChild(btn);
             });
+
+            // 席替え結果が存在する場合はDLボタンを有効化
+            const downloadBtn = document.getElementById('btn-download');
+            if (downloadBtn) {
+                if (resultSeating.length > 0 && resultSeating.some(s => s.studentId !== null)) {
+                    downloadBtn.disabled = false;
+                } else {
+                    downloadBtn.disabled = true;
+                }
+            }
         }
 
         function handleSeatClick(idx) {
@@ -463,7 +489,6 @@
                 seat.studentId = null;
             }
             
-            // 座席の有効/無効が変わったので、数学モードならグループのかたまりを再計算
             if(config.mode === 'math') {
                 assignGroupsAutomatically();
             }
@@ -471,8 +496,8 @@
         }
 
         function saveAssignment() {
-            const val = parseInt(document.getElementById('assign-student-id').value);
-            if (val && !isNaN(val)) {
+            const val = document.getElementById('assign-student-id').value;
+            if (val) {
                 config.seats.forEach(s => { if(s.studentId === val) { s.type = 'normal'; s.studentId = null; }});
                 config.seats[selectedSeatIndex].type = 'fixed';
                 config.seats[selectedSeatIndex].studentId = val;
@@ -491,8 +516,8 @@
             stopSequence();
             const troubleInput = document.getElementById('trouble-pairs').value;
             config.troublePairs = troubleInput.split('/')
-                .map(p => p.split(',').map(n => parseInt(n.trim())))
-                .filter(p => p.length >= 2 && !p.some(isNaN));
+                .map(p => p.split(',').map(n => n.trim()))
+                .filter(p => p.length >= 2 && p.every(n => n !== ""));
             
             config.mode = document.getElementById('mode-select').value;
             isRevealed = false; 
@@ -531,7 +556,6 @@
                 }
             }
 
-            // 深いコピーで結果を保存
             resultSeating = bestLayout.map(s => ({...s}));
             
             if (minViolations > 0) {
@@ -553,29 +577,27 @@
                 const r = Math.floor(idx / config.cols);
                 const c = idx % config.cols;
                 
-                const allNeighbors = [];
-                const crossNeighbors = [];
+                const neighbors = [];
                 
                 for(let dr=-1; dr<=1; dr++) {
                     for(let dc=-1; dc<=1; dc++) {
-                        if(dr===0 && dc===0) continue;
+                        // 斜め方向と自分自身を除外し、十字方向（前後左右）のみを取得
+                        if(Math.abs(dr) + Math.abs(dc) !== 1) continue;
+                        
                         const n = getAt(r+dr, c+dc);
                         if(n && n.studentId) {
-                            allNeighbors.push(n);
-                            if (Math.abs(dr) + Math.abs(dc) === 1) {
-                                crossNeighbors.push(n);
-                            }
+                            neighbors.push(n);
                         }
                     }
                 }
                 
-                // トラブル対応 (8方向すべてで判定、および同グループ判定)
+                // トラブル対応 (十字方向で判定、および同グループ判定)
                 config.troublePairs.forEach(pair => {
                     if (pair.includes(seat.studentId)) {
                         const otherId = pair.find(id => id !== seat.studentId);
                         
                         // 物理的な隣接は常に避ける
-                        if (allNeighbors.some(n => n.studentId === otherId)) v += 10;
+                        if (neighbors.some(n => n.studentId === otherId)) v += 10;
 
                         // グループワークモードの場合は、同じグループになることを強力に避ける
                         if (config.mode === 'math') {
@@ -585,9 +607,19 @@
                     }
                 });
 
+                // ★新規追加: 過去の隣接履歴ペナルティ (十字方向のみで判定)
+                if (pastNeighborsMap[seat.studentId]) {
+                    neighbors.forEach(n => {
+                        // 過去に隣だった人がまた隣にいる場合はペナルティ(+20)
+                        if (pastNeighborsMap[seat.studentId].has(n.studentId)) {
+                            v += 20; 
+                        }
+                    });
+                }
+
                 // 性別の孤立防止
                 if (config.mode === 'normal') {
-                    const sameGenderCount = crossNeighbors.filter(n => n.gender === seat.gender).length;
+                    const sameGenderCount = neighbors.filter(n => n.gender === seat.gender).length;
                     if (sameGenderCount === 0) v += 5;
                 } else if (config.mode === 'math') {
                     const myGroup = layout[idx].groupId;
@@ -661,7 +693,6 @@
 
                 const back = document.createElement('div');
                 const backBgClass = config.mode === 'normal' ? 'bg-white border-slate-200' : `${colors.back} ${colors.border}`;
-                // プロジェクターでの区別をはっきりさせるため、border-2 を適用
                 back.className = `flip-card-back shadow-sm flex flex-col items-center justify-center border-2 ${backBgClass} relative overflow-hidden`;
                 
                 if (seat.type === 'disabled') {
@@ -746,46 +777,141 @@
             box.className = `mt-2 p-2 rounded-lg text-[10px] font-medium block ${isError ? 'bg-red-100 border border-red-200 text-red-700' : 'bg-emerald-100 border border-emerald-200 text-emerald-700'}`;
         }
 
+        // --- ★新規追加: CSVデータ管理機能 ---
+        function downloadTemplate() {
+            const csv = "id,gender\n1,M\n2,F\n3,M\n4,F\n5,M\n6,F\n";
+            triggerFileDownload(csv, "seating_template.csv");
+        }
+
+        function handleCSVUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                parseHistoryCSV(text);
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        function parseHistoryCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length < 2) return;
+            
+            const headers = lines[0].split(',').map(h => h.trim());
+            const idIdx = headers.indexOf('id') !== -1 ? headers.indexOf('id') : 0;
+            const genderIdx = headers.indexOf('gender') !== -1 ? headers.indexOf('gender') : 1;
+
+            pastHistoryHeaders = headers.filter(h => h.startsWith('history_'));
+            
+            // 直近3回分のヘッダーのみを抽出
+            const recentHeaders = pastHistoryHeaders.slice(-3);
+
+            config.students = [];
+            studentHistoryData = {};
+            pastNeighborsMap = {};
+
+            for(let i=1; i<lines.length; i++) {
+                if(!lines[i].trim()) continue;
+                const cols = lines[i].split(',').map(c => c.trim());
+                const id = cols[idIdx];
+                const gender = cols[genderIdx];
+                if (!id) continue;
+
+                config.students.push({id, gender});
+                studentHistoryData[id] = {};
+                pastNeighborsMap[id] = new Set();
+
+                pastHistoryHeaders.forEach(h => {
+                    const hIdx = headers.indexOf(h);
+                    if(hIdx !== -1 && cols[hIdx]) {
+                        studentHistoryData[id][h] = cols[hIdx];
+                        // 抽選のペナルティ対象には、直近3回分のみを追加する
+                        if (recentHeaders.includes(h)) {
+                            // ★修正: 過去のハイフン(-)と新しいアンダースコア(_)の両方に対応
+                            cols[hIdx].split(/[-_]/).forEach(nId => {
+                                if(nId) pastNeighborsMap[id].add(nId);
+                            });
+                        }
+                    }
+                });
+            }
+            
+            const consideredCount = Math.min(pastHistoryHeaders.length, 3);
+            
+            // 読込完了メッセージのUI表示
+            const statusEl = document.getElementById('upload-status');
+            statusEl.innerHTML = `✅ 読込完了！<br>生徒: ${config.students.length}名 / 履歴: ${pastHistoryHeaders.length}回分<br><span class="text-[10px] font-normal text-green-600">（抽選では直近 ${consideredCount}回分 の隣接を避けます）</span>`;
+            statusEl.classList.remove('hidden');
+
+            updateGridSize();
+        }
+
+        function downloadResultCSV() {
+            if (!resultSeating || resultSeating.length === 0) return;
+
+            const currentNeighbors = {};
+            config.students.forEach(s => currentNeighbors[s.id] = []);
+
+            resultSeating.forEach((seat, idx) => {
+                if(!seat.studentId) return;
+                const r = Math.floor(idx / config.cols);
+                const c = idx % config.cols;
+
+                for(let dr=-1; dr<=1; dr++){
+                    for(let dc=-1; dc<=1; dc++){
+                        // 履歴への保存も十字方向（前後左右）のみに限定する
+                        if(Math.abs(dr) + Math.abs(dc) !== 1) continue;
+                        
+                        const nr = r+dr; const nc = c+dc;
+                        if(nr>=0 && nr<config.rows && nc>=0 && nc<config.cols){
+                            const nIdx = nr * config.cols + nc;
+                            const nSeat = resultSeating[nIdx];
+                            if(nSeat && nSeat.studentId){
+                                currentNeighbors[seat.studentId].push(nSeat.studentId);
+                            }
+                        }
+                    }
+                }
+            });
+
+            const newHistoryKey = `history_${pastHistoryHeaders.length + 1}`;
+            let headerRow = ['id', 'gender', ...pastHistoryHeaders, newHistoryKey].join(',');
+            let csvText = headerRow + '\n';
+
+            config.students.forEach(s => {
+                let rowData = [`${s.id}`, `${s.gender}`];
+                pastHistoryHeaders.forEach(h => {
+                    rowData.push(studentHistoryData[s.id][h] || '');
+                });
+                // ★修正: Excelの日付変換を防ぐため、ハイフン(-)の代わりにアンダースコア(_)で結合
+                rowData.push(currentNeighbors[s.id].join('_'));
+                csvText += rowData.join(',') + '\n';
+            });
+
+            const today = new Date();
+            const dateStr = `${today.getFullYear()}${(today.getMonth()+1).toString().padStart(2,'0')}${today.getDate().toString().padStart(2,'0')}`;
+            triggerFileDownload(csvText, `seating_history_${dateStr}.csv`);
+        }
+
+        function triggerFileDownload(content, filename) {
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
         init();
         document.getElementById('cols-input').addEventListener('change', updateGridSize);
         document.getElementById('rows-input').addEventListener('change', updateGridSize);
         document.getElementById('mode-select').addEventListener('change', updateGridSize);
         document.getElementById('group-size-input').addEventListener('change', updateGridSize);
-        
-        document.getElementById('student-data-upload').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const text = e.target.result;
-                const lines = text.split('\n');
-                const newStudents = [];
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-                    const parts = line.split(',');
-                    if (parts.length >= 2) {
-                        const id = parseInt(parts[0].trim());
-                        if (isNaN(id)) continue;
-                        const genderStr = parts[1].trim().toUpperCase();
-                        let gender = 'M';
-                        if (genderStr === 'F' || genderStr === '女' || genderStr === 'FEMALE') {
-                            gender = 'F';
-                        }
-                        newStudents.push({ id: id, gender: gender });
-                    }
-                }
-                if (newStudents.length > 0) {
-                    config.students = newStudents;
-                    showMessage(`生徒データを ${newStudents.length} 名分読み込みました。`, false);
-                } else {
-                    showMessage('有効なデータが見つかりませんでした。CSVの形式を確認してください。', true);
-                }
-                e.target.value = ''; // Reset input
-            };
-            reader.readAsText(file);
-        });
     </script>
 </body>
 </html>
